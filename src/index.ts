@@ -6,6 +6,8 @@ import {
   ICommandPalette
 } from '@jupyterlab/apputils';
 
+import { Widget } from '@lumino/widgets';
+
 import { LabIcon } from '@jupyterlab/ui-components';
 
 import { IDisposable, DisposableDelegate } from '@lumino/disposable';
@@ -28,7 +30,11 @@ import {
   slice
 } from '@andrewhead/python-program-analysis';
 
-import { ConfirmWidget, FeatureSubmittedOkayWidget } from './widgets';
+import {
+  ConfirmWidget,
+  FeatureSubmissionStateWidget,
+  FeatureSubmittedOkayWidget
+} from './widgets';
 
 import {
   ISubmissionResponse,
@@ -36,7 +42,8 @@ import {
   getEndpointUrl,
   submit,
   request,
-  isAuthenticated
+  isAuthenticated,
+  getSubmission
 } from './serverextension';
 
 const EXTENSION_NAME = 'ballet-assemble';
@@ -272,29 +279,71 @@ export class AssembleSubmitButtonExtension
     return button;
   }
 
+  /**
+   * runs func until it returns true. func runtime is part of interval
+   */
+  private async runUntilDone(
+    func: () => Promise<boolean|void>,
+    interval: number = ONE_SECOND
+  ) {
+    const timeout = new Promise<void>((resolve, _) => {
+      setTimeout(resolve, interval);
+    });
+    if (await func()) {
+      return;
+    } else {
+      await timeout;
+      await this.runUntilDone(func, interval);
+    }
+  }
+
   private async submitContentToServer(contents: string) {
     // post contents to server
     console.log(contents);
-    const result: ISubmissionResponse = await submit(contents);
+    await submit(contents);
 
-    // try to add a message to cell outputs
-    if (result.result) {
-      void showDialog({
-        title: 'Feature submitted successfully',
-        body: new FeatureSubmittedOkayWidget(result.url),
-        buttons: [Dialog.okButton()]
-      });
-    } else {
-      const message =
-        result.message !== undefined && result.message !== null
-          ? `: ${result.message}.`
-          : '.';
-      void showErrorMessage(
-        'Error submitting feature',
-        `Oops - there was a problem submitting your feature${message}`
-      );
-      console.error(result);
-    }
+    // create widget and render it in buttonless dialog
+    const widget = new FeatureSubmissionStateWidget();
+    const dialog = new Dialog({
+      title: 'Feature submission in progress',
+      body: widget,
+      buttons: []
+    });
+    Widget.attach(dialog, document.body);
+
+    await this.runUntilDone(async () => {
+      const result: ISubmissionResponse = await getSubmission();
+
+      // if response contains url, submission was successful
+      if (result.url) {
+        void showDialog({
+          title: 'Feature submitted successfully',
+          body: new FeatureSubmittedOkayWidget(result.url, result.state),
+          buttons: [Dialog.okButton()]
+        });
+        dialog.dispose();
+        return true;
+
+        // if result contains error message, display it
+      } else if (result.message) {
+        const message =
+          result.message !== undefined && result.message !== null
+            ? `: ${result.message}.`
+            : '.';
+        void showErrorMessage(
+          'Error submitting feature',
+          `Oops - there was a problem submitting your feature${message}`
+        );
+        console.error(result);
+        dialog.dispose();
+        return true;
+
+        // otherwise update widget and run again
+      } else {
+        widget.submissionState = result.state;
+        return false;
+      }
+    });
   }
 
   private createSliceButton(panel: NotebookPanel) {

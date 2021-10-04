@@ -33,6 +33,7 @@ TESTING_URL = 'http://some/testing/url'
 @dataclass
 class Response:
     result: bool
+    state: dict = None
     url: str = None
     message: str = None
     tb: str = None
@@ -85,6 +86,23 @@ def handlefailures(call):
         message = str(e)
         tb = ''.join(traceback.format_tb(e.__traceback__))
         return Response(result=False, message=message, tb=tb)
+
+
+def changestate(state):
+    def decorator(func):
+        @fy.wraps(func)
+        def wrapped(self, *args, **kwargs):
+            try:
+                self.submission_state[state] = False
+                result = func(self, *args, **kwargs)
+                self.submission_state[state] = True
+                return result
+            except Exception as e:
+                self.submission_error["message"] = str(e)
+                self.submission_error["tb"] = ''.join(traceback.format_tb(e.__traceback__))
+                raise e
+        return wrapped
+    return decorator
 
 
 class AssembleApp(SingletonConfigurable):
@@ -224,9 +242,25 @@ class AssembleApp(SingletonConfigurable):
 
         raise ConfigurationError('Could not detect Ballet project')
 
+    submission_state = {}
+    submission_error = {}
+
+    def reset_submission_state(self):
+        self.submission_state = {}
+        self.submission_error = {}
+
     @fy.post_processing(asdict)
+    def get_submission_state(self):
+        state = self.submission_state
+        url = self.submission_state.get('url')
+        result = self.submission_error == {}
+        message = self.submission_error.get('message')
+        tb = self.submission_error.get('tb')
+        return Response(result=result, state=state, url=url, message=message, tb=tb)
+
     @handlefailures
-    def create_pull_request_for_code_content(self, input_data: dict) -> Response:
+    def create_pull_request_for_code_content(self, input_data: dict) -> None:
+        self.reset_submission_state()
         code_content = self.load_request(input_data)
         self.check_code_is_valid(code_content)
 
@@ -242,10 +276,11 @@ class AssembleApp(SingletonConfigurable):
                 changed_files, new_feature_path = self.start_new_feature(dirname, feature_name)
                 self.write_code_content(new_feature_path, code_content)
                 self.commit_changes(repo, changed_files)
-                push_result = self.push_to_remote(repo, branch_name)  # noqa F841
+                self.push_to_remote(repo, branch_name)  # noqa F841
                 # TODO if push failed, likely because fork does not yet exist, then try again
-                return self.create_pull_request(feature_name, branch_name)
+                self.submission_state["url"] = self.create_pull_request(feature_name, branch_name)
 
+    @changestate('load')
     @stacklog('DEBUG', 'Loading request')
     def load_request(self, input_data: dict) -> str:
         try:
@@ -254,6 +289,7 @@ class AssembleApp(SingletonConfigurable):
             raise TypeError(f'Bad request - {e}') from e
         return req.codeContent
 
+    @changestate('check')
     @stacklog('INFO', 'Checking for valid code')
     def check_code_is_valid(self, code_content: str) -> None:
         if not code_content.strip():
@@ -262,6 +298,7 @@ class AssembleApp(SingletonConfigurable):
         if not is_valid_python(code_content):
             raise ValueError('Submitted code is not valid Python code')
 
+    @changestate('fork')
     @stacklog('INFO', 'Forking upstream repo')
     def fork_repo(self) -> None:
         """Ask GitHub to create a fork of the repo and return immediately"""
@@ -274,10 +311,12 @@ class AssembleApp(SingletonConfigurable):
             self.log.debug('Didn\'t actually fork repo due to debug')
             return None
 
+    @changestate('clone')
     @stacklog('INFO', 'Cloning repo')
     def clone_repo(self, dirname: str) -> git.Repo:
         return git.Repo.clone_from(self.repo_url, to_path=dirname)
 
+    @changestate('configure')
     @stacklog('INFO', 'Configuring repo')
     def configure_repo(self, repo: git.Repo) -> None:
         set_config_variables(repo, {
@@ -286,6 +325,7 @@ class AssembleApp(SingletonConfigurable):
         })
         repo.remote().set_url(self.repo_url)
 
+    @changestate('branch')
     @stacklog('INFO', 'Creating new branch and checking it out')
     def create_new_branch(self, repo: git.Repo) -> Tuple[str, str]:
         feature_name, branch_name = make_feature_and_branch_name()
@@ -293,6 +333,7 @@ class AssembleApp(SingletonConfigurable):
         repo.heads[branch_name].checkout()
         return feature_name, branch_name
 
+    @changestate('feature')
     @stacklog('INFO', 'Starting new feature')
     def start_new_feature(self, dirname: str, feature_name: str) -> Tuple[List[str], str]:
         # start new feature
@@ -315,17 +356,20 @@ class AssembleApp(SingletonConfigurable):
         new_feature_path = get_new_feature_path(changes)
         return changed_files, new_feature_path
 
+    @changestate('write')
     @stacklog('INFO', 'Adding code content')
     def write_code_content(self, new_feature_path: str, code_content: str):
         with open(new_feature_path, 'w') as f:
             blackened_code_content = blacken_code(code_content)
             f.write(blackened_code_content)
 
+    @changestate('commit')
     @stacklog('INFO', 'Committing new feature')
     def commit_changes(self, repo, changed_files):
         repo.index.add(changed_files)
         repo.index.commit('Add new feature')
 
+    @changestate('push')
     @stacklog('INFO', 'Pushing to remote')
     def push_to_remote(self, repo, branch_name) -> List[git.remote.PushInfo]:
         refspec = f'refs/heads/{branch_name}:refs/heads/{branch_name}'
@@ -334,6 +378,7 @@ class AssembleApp(SingletonConfigurable):
         else:
             self.log.debug('Didn\'t actually push to remote due to debug')
 
+    @changestate('pullrequest')
     @stacklog('INFO', 'Creating pull request')
     def create_pull_request(self, feature_name, branch_name):
         grepo = self.github.get_repo(self.upstream_repo_spec)
@@ -364,7 +409,7 @@ class AssembleApp(SingletonConfigurable):
             self.log.debug('Didn\'t create real pull request due to debug')
             url = TESTING_URL
 
-        return Response(result=True, url=url)
+        return url
 
 
 def print_help():

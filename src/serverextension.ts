@@ -6,8 +6,24 @@ export interface ISubmissionRequest {
   codeContent: string;
 }
 
+export interface ISubmissionState {
+  load?: boolean;
+  check?: boolean;
+  fork?: boolean;
+  clone?: boolean;
+  configure?: boolean;
+  branch?: boolean;
+  feature?: boolean;
+  write?: boolean;
+  commit?: boolean;
+  push?: boolean;
+  pullrequest?: boolean;
+  url?: string;
+}
+
 export interface ISubmissionResponse {
   result: boolean;
+  state?: ISubmissionState;
   url?: string;
   message?: string;
   tb?: string;
@@ -30,6 +46,15 @@ export async function submit(
 
   try {
     return request<ISubmissionResponse>(endPoint, init);
+  } catch (error) {
+    console.error(error);
+    return { result: false };
+  }
+}
+
+export async function getSubmission(): Promise<ISubmissionResponse> {
+  try {
+    return request<ISubmissionResponse>('submit');
   } catch (error) {
     console.error(error);
     return { result: false };

@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 from urllib.parse import urlencode, urljoin
 
@@ -80,12 +81,27 @@ class ConfigItemHandler(APIHandler):
 
 class SubmitHandler(APIHandler):
 
+    lock = tornado.locks.Lock()
+
     @tornado.web.authenticated
-    def post(self):
+    async def post(self):
         input_data = self.get_json_body()
         app = AssembleApp.instance()
-        result = app.create_pull_request_for_code_content(input_data)
-        self.write(result)
+        self.write({"result": True})
+        self.finish()
+        ioloop = tornado.ioloop.IOLoop.current()
+        async with self.lock:  # TODO use lock or return error?
+            with ThreadPoolExecutor(max_workers=1) as tpe:
+                await ioloop.run_in_executor(
+                    tpe,
+                    app.create_pull_request_for_code_content,
+                    input_data
+                )
+
+    @tornado.web.authenticated
+    async def get(self):
+        app = AssembleApp.instance()
+        self.write(app.get_submission_state())
 
 
 class AuthorizeHandler(IPythonHandler):
