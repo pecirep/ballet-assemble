@@ -1,5 +1,7 @@
-import { ReactWidget } from '@jupyterlab/apputils';
+import { ReactWidget, UseSignal } from '@jupyterlab/apputils';
+import { Signal } from '@lumino/signaling';
 import React from 'react';
+import { ISubmissionState } from './serverextension';
 
 export class ConfirmWidget extends ReactWidget {
   code: string;
@@ -28,6 +30,66 @@ export class ConfirmWidget extends ReactWidget {
   }
 }
 
+type IStateDetails = { [k in keyof ISubmissionState]: JSX.Element | string };
+
+const stateDetails: IStateDetails = {
+  check: '🔍Checking for valid code',
+  fork: '🔱Forking upstream repository',
+  clone: '📥Cloning repository',
+  configure: '🛠️Configuring repository',
+  branch: '🌳Creating new branch',
+  feature: '✨Starting new feature',
+  write: '✒️Adding code content',
+  commit: '💍Committing new feature',
+  push: '📤Pushing to remote',
+  pullrequest: '🙋🏽‍♂️Creating pull request'
+};
+
+export class FeatureSubmissionStateWidget extends ReactWidget {
+  set submissionState(submissionState: ISubmissionState) {
+    this.stateSignal.emit(submissionState);
+  }
+
+  private spinner: JSX.Element = (
+    <span className="spinner">
+      <span className="spinnerContent" />
+    </span>
+  );
+
+  private renderListDetails(submissionState: ISubmissionState): JSX.Element[] {
+    return (Object.entries(stateDetails) as [
+      keyof IStateDetails,
+      string
+    ][]).map(([k, v]) => (
+      <p
+        key={k}
+        style={{
+          lineHeight: 2,
+          visibility: submissionState[k] == null ? 'hidden' : 'visible'
+        }}
+      >
+        {v}... {submissionState[k] ? '✔️' : this.spinner}
+      </p>
+    ));
+  }
+
+  protected render(): JSX.Element {
+    return (
+      <div className="assemble-featureSubmissionState">
+        <p> Your feature is being submitted... </p>
+        <br />
+        <div>
+          <UseSignal signal={this.stateSignal} initialArgs={{}}>
+            {(_, submissionState) => this.renderListDetails(submissionState)}
+          </UseSignal>
+        </div>
+      </div>
+    );
+  }
+
+  private stateSignal = new Signal<this, ISubmissionState>(this);
+}
+
 export class FeatureSubmittedOkayWidget extends ReactWidget {
   url: string;
 
@@ -48,7 +110,7 @@ export class FeatureSubmittedOkayWidget extends ReactWidget {
           <a href={this.url} target="_blank">
             {this.url}
           </a>
-          .{' '}
+          . <span className="spinner"></span>
         </p>
         <br />
         <p> Please do not submit this same feature more than once. </p>

@@ -1,6 +1,7 @@
 import http
 from dataclasses import asdict
 from unittest.mock import Mock, patch
+import time
 
 import pytest
 import requests
@@ -104,18 +105,29 @@ class AssembleHandlersTest(BaseTestCase):
         assert 'result' in d and d['result']
 
     @patch('ballet_assemble.app.AssembleApp.create_pull_request_for_code_content')
-    def test_submit(self, mock_create):
+    @patch('ballet_assemble.app.AssembleApp.get_submission_state')
+    def test_submit(self, mock_create_get, mock_create_create):
         url = 'url'
         result = True
-        mock_result = ballet_assemble.app.Response(result=result, url=url)
-        mock_create.return_value = asdict(mock_result)
+        states = ['load', 'check', 'fork', 'clone', 'configure', 'branch', 'feature', 'write', 'commit', 'push', 'pullrequest']
+        mock_result = ballet_assemble.app.Response(result=result, url=url, state={s:True for s in states})
+        mock_create_get.return_value = asdict(mock_result)
+        mock_result = ballet_assemble.app.Response(result=result)
+        mock_create_create.return_value = asdict(mock_result)
 
         response = self.request('POST', '/assemble/submit', json={
             'codeContent': 'code',
         })
         d = response.json()
 
-        assert d['result'] == result and d['url'] == url
+        assert d['result'] == result
+
+        response = self.request('GET', 'assemble/submit')
+        d = response.json()
+
+        assert all([s in d['state'] for s in states])
+        assert all(d['state'].values())
+        assert d['url'] == url
 
     def test_submit_empty_cell(self):
         response = self.request('POST', '/assemble/submit', json={
@@ -123,5 +135,11 @@ class AssembleHandlersTest(BaseTestCase):
         })
         d = response.json()
 
+        assert d['result'] == True
+
+        response = self.request('GET', 'assemble/submit')
+        d = response.json()
+
         assert d['result'] == False
+        assert d['state']['check'] == False
         assert d['message'] is not None
