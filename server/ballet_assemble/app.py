@@ -8,7 +8,7 @@ import uuid
 from dataclasses import asdict, dataclass
 from os import getenv
 from textwrap import dedent
-from typing import List, Tuple
+from typing import List, Tuple, Literal
 from urllib.parse import urljoin
 
 import ballet.templating
@@ -22,12 +22,16 @@ from ballet.util.code import blacken_code, is_valid_python
 from ballet.util.git import set_config_variables
 from cookiecutter.utils import work_in
 from github import Github
+from github.PullRequest import PullRequest
+from github.CheckRun import CheckRun
 from notebook.notebookapp import NotebookApp
 from stacklog import stacklog as _stacklog
 from traitlets import Bool, Integer, Unicode, default, validate
 from traitlets.config import SingletonConfigurable
 
 TESTING_URL = 'http://some/testing/url'
+
+GITHUB_TRAVIS_APP_ID = 67
 
 
 @dataclass
@@ -103,6 +107,18 @@ def changestate(state):
                 raise e
         return wrapped
     return decorator
+
+
+# def use_travis_token(func):
+#     def wrapper(self, *args):
+#         if not self.travis_token:
+#             headers = {"User-Agent": "Assemble/1.0.0",
+#                        "Accept": "application/vnd.travis-ci.2.1+json"}
+#             result = requests.post("https://api.travis-ci.org/auth/github",
+#                                    headers=headers, json={"github_token": self.github_token})
+#             self.travis_token = result.json()['access_token']
+#         return func(self, *args)
+#     return wrapper
 
 
 class AssembleApp(SingletonConfigurable):
@@ -241,6 +257,39 @@ class AssembleApp(SingletonConfigurable):
             return Project.from_cwd()
 
         raise ConfigurationError('Could not detect Ballet project')
+
+    pr_state = Literal["all", "open", "closed"]
+
+    def get_repo_prs(self, state: pr_state = 'all', page: int = 0) -> List[PullRequest]:
+        return self.upstream_repo.get_pulls(state=state).get_page(page)
+
+    def get_own_prs(self, state: pr_state = 'all', page: int = 0) -> List[PullRequest]:
+        return [i.as_pull_request() for i in self.github.search_issues(
+            f'type:pr repo:{self.upstream_repo_spec} author:{self.username} state:{state}'
+        ).get_page(page)]
+
+    def get_latest_checks_for_pull_request(self, pr: PullRequest) -> List[CheckRun]:
+        return pr.get_commits().get_page(0)[-1].get_check_runs().get_page(0)
+
+    def pull_request_checks_completed(self, checks: List[CheckRun]) -> bool:
+        return all([check.status == 'completed' for check in checks])
+
+    def pull_request_checks_successful(self, checks: List[CheckRun]) -> bool:
+        return all([check.conclusion == 'success' for check in checks])
+
+    def get_travis_build_id(self, checks: List[CheckRun]) -> str:
+        return next((c for c in checks if c.app.id == GITHUB_TRAVIS_APP_ID), None).external_id
+
+    travis_session = requests.Session()
+    travis_session.headers = {'travis-api-version': 3}
+
+    def get_travis_jobs(self, build_id: str):
+        url = f'https://api.travis-ci.com/build/{build_id}/jobs'
+        return self.travis_session.get(url).json()['jobs']
+
+    def get_prs_with_checks(self, own: bool = False, state: pr_state = 'all', page: int = 0):
+        prs = self.get_own_prs(state, page) if own else self.get_repo_prs(state, page)
+        
 
     submission_state = {}
     submission_error = {}
