@@ -124,9 +124,10 @@ export function getCodeFromSlice(slicedLoc: LocationSet, ctsSplit: string[]) {
 
   let map = new Map();
   for (let i = 0; i < slicedLoc.items.length; i++) {
-    const line = slicedLoc.items[i].first_line;
-    // [line - 1] because location type starts at 1, not 0
-    map.set(line, ctsSplit[line - 1]);
+    for (let line = slicedLoc.items[i].first_line; line <= slicedLoc.items[i].last_line; line++) {
+      // [line - 1] because location type starts at 1, not 0
+      map.set(line, ctsSplit[line - 1]);
+    }
   }
 
   let arraySorted = [...map.entries()].sort();
@@ -336,7 +337,7 @@ export class AssembleSubmitButtonExtension
         try {
           loc = getLocationFromCurrentCell(activeCell, ctsSplit);
         } catch (e) {
-          alert(e.message);
+          alert(e instanceof Error ? e.message : e);
         }
 
         let slicedLoc = slice(tree, loc);
@@ -345,7 +346,7 @@ export class AssembleSubmitButtonExtension
         try {
           result = getCodeFromSlice(slicedLoc, ctsSplit);
         } catch (e) {
-          alert(e.message);
+          alert(e instanceof Error ? e.message : e);
         }
 
         const finalDialog = await showDialog({
@@ -435,3 +436,4 @@ const extension: JupyterFrontEndPlugin<void> = {
 };
 
 export default extension;
+
