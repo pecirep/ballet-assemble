@@ -6,6 +6,8 @@ import {
   ICommandPalette
 } from '@jupyterlab/apputils';
 
+import { Notebook, NotebookActions } from '@jupyterlab/notebook';
+
 import { Widget } from '@lumino/widgets';
 
 import { LabIcon } from '@jupyterlab/ui-components';
@@ -31,6 +33,8 @@ import {
 } from '@andrewhead/python-program-analysis';
 
 import {
+  IFeatureWidgetState,
+  CheckFeatureWidget,
   ConfirmWidget,
   FeatureSubmissionStateWidget,
   FeatureSubmittedOkayWidget
@@ -43,6 +47,9 @@ import {
   submit,
   request,
   isAuthenticated,
+  getExistingFeatures,
+  getNewFeatureInputs,
+  getExistingFeatureCode,
   getSubmission
 } from './serverextension';
 
@@ -144,6 +151,11 @@ export function getCodeFromSlice(slicedLoc: LocationSet, ctsSplit: string[]) {
   }
   let result = finalSlice.join('\n');
   return result;
+}
+
+export function createCellFromCode(notebook: Notebook, code: string) {
+  NotebookActions.insertBelow(notebook);
+  notebook.activeCell.model.value.text = code;
 }
 
 /**
@@ -263,6 +275,9 @@ export class AssembleSubmitButtonExtension
         let activeCell = notebook.activeCell;
         let contents = activeCell.model.value.text;
 
+        const passedSimilarityCheck = await this.checkForFeaturesWithSameInputs(panel.content, contents);
+        if (!passedSimilarityCheck) return;
+
         // confirm to proceed
         const confirmDialog = await showDialog({
           title: 'Submit feature?',
@@ -344,6 +359,55 @@ export class AssembleSubmitButtonExtension
         return false;
       }
     });
+  }
+
+  private async checkForFeaturesWithSameInputs(notebook: Notebook, contents: string) {
+    const widget = new CheckFeatureWidget(notebook);
+    const dialog = new Dialog({
+      title: 'Checking for similar features...',
+      body: widget,
+      buttons: [Dialog.cancelButton()]
+    });
+    void dialog.launch()
+
+    const [existingFeatures, newFeatureInputs] = await Promise.all([getExistingFeatures(), getNewFeatureInputs(contents)]);
+
+    if (!newFeatureInputs) {
+      dialog.dispose();
+      return false;
+      //TODO: suggest code slicing
+    }
+
+    for (const feature in newFeatureInputs) {
+      widget.setState({ name: feature, similarFeatures: {} })
+      const newInputs = newFeatureInputs[feature];
+      const existingFeaturesWithSameInputs = Object.keys(existingFeatures).filter(featureId => {
+        const featureInfo = existingFeatures[featureId];
+        return newInputs.every(input => featureInfo.inputs.includes(input));
+      });
+
+      if (existingFeaturesWithSameInputs.length > 0) {
+        Promise.all(existingFeaturesWithSameInputs.map(async (featureId) => [featureId, await getExistingFeatureCode(featureId)])).then((featureCodePairs) => {
+          const similarFeatures = featureCodePairs.reduce<IFeatureWidgetState['similarFeatures']>((acc, [featureId, featureCode]) => {
+            acc[featureId] = { ...existingFeatures[featureId], code: featureCode};
+            return acc;
+          }, {});
+          widget.setState({ name: feature, similarFeatures });
+        });
+
+        dialog.dispose();
+
+        const dialogResponse = await showDialog({
+          title: 'Similar features found',
+          body: widget,
+          buttons: [Dialog.cancelButton(), Dialog.okButton({label: 'Continue anyway'})]
+        });
+
+        if (!dialogResponse.button.accept) return false;
+      }
+    }
+    if (!dialog.isDisposed) dialog.dispose();
+    return true;
   }
 
   private createSliceButton(panel: NotebookPanel) {

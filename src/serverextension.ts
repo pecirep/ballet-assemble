@@ -33,6 +33,20 @@ export interface IAuthenticatedResponse {
   result: boolean;
 }
 
+interface IFeatureInfo {
+  name: string;
+  inputs: string[];
+  author: string;
+}
+
+interface IFeatureInfoResponse {
+  [featureId: string]: IFeatureInfo;
+}
+
+interface IFeatureInputResponse {
+  [featureId: string]: string[];
+}
+
 export async function submit(
   cellContents: string
 ): Promise<ISubmissionResponse> {
@@ -50,6 +64,26 @@ export async function submit(
     console.error(error);
     return { result: false };
   }
+}
+
+export async function getExistingFeatures(): Promise<IFeatureInfoResponse> {
+  return request<IFeatureInfoResponse>('features');
+}
+
+export async function getExistingFeatureCode(featureId: string) {
+  const response = await request<{ code: string }>(`features/${featureId}`);
+  return response.code;
+}
+
+export function getNewFeatureInputs(
+  cellContents: string
+): Promise<IFeatureInputResponse | void> {
+  return request<IFeatureInputResponse>('inspect', {
+    method: 'POST',
+    body: JSON.stringify({
+      codeContent: cellContents
+    })
+  }).catch(console.error);
 }
 
 export async function getSubmission(): Promise<ISubmissionResponse> {

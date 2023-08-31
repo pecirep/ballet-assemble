@@ -5,16 +5,19 @@ import pathlib
 import tempfile
 import traceback
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, is_dataclass
 from os import getenv
 from textwrap import dedent
 from typing import List, Tuple
 from urllib.parse import urljoin
+import importlib.util
+import inspect
 
 import ballet.templating
 import funcy as fy
 import git
 import requests
+from ballet.contrib import _collect_contrib_features
 from ballet.exc import ConfigurationError
 from ballet.project import Project
 from ballet.util import truthy
@@ -28,7 +31,6 @@ from traitlets import Bool, Integer, Unicode, default, validate
 from traitlets.config import SingletonConfigurable
 
 TESTING_URL = 'http://some/testing/url'
-
 
 @dataclass
 class Response:
@@ -76,6 +78,13 @@ def get_new_feature_path(changes: List[Tuple[str, str]]):
 
 def make_random_state():
     return base64.urlsafe_b64encode(os.urandom(16)).decode()
+
+
+def asdictIfDataclass(obj):
+    if is_dataclass(obj):
+        return asdict(obj)
+    else:
+        return obj
 
 
 @fy.decorator
@@ -241,6 +250,37 @@ class AssembleApp(SingletonConfigurable):
             return Project.from_cwd()
 
         raise ConfigurationError('Could not detect Ballet project')
+
+    @property
+    def existing_features(self):
+        return self.project.api.features
+
+    @property
+    def existing_feature_inputs(self):
+        return { f.source: { "inputs": f.input, "name": f.name, "author": f.author } for f in self.existing_features }
+
+    def import_module_from_string(self, name: str, source: str):
+        spec = importlib.util.spec_from_loader(name, loader=None)
+        if spec is None:
+            return None
+        module = importlib.util.module_from_spec(spec)
+        exec(source, module.__dict__)
+        return module
+
+    @fy.post_processing(asdictIfDataclass)
+    @handlefailures
+    def extract_inputs_from_feature_code(self, input_data: dict):
+        code_content = self.load_request(input_data)
+        module = self.import_module_from_string('newfeature', code_content)
+        if module is None:
+            return {}
+        features = [f for f in _collect_contrib_features(module) if f]
+        return { f.name:f.input for f in features }
+
+    @handlefailures
+    def get_feature_code(self, feature_source: str):
+        module = importlib.import_module(feature_source)
+        return inspect.getsource(module)
 
     submission_state = {}
     submission_error = {}

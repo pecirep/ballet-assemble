@@ -79,6 +79,38 @@ class ConfigItemHandler(APIHandler):
             self.send_error(404)
 
 
+class FeaturesHandler(APIHandler):
+
+    @tornado.web.authenticated
+    def get(self):
+        app = AssembleApp.instance()
+        self.write(app.existing_feature_inputs)
+
+
+class FeatureCodeHandler(APIHandler):
+
+    @tornado.web.authenticated
+    def get(self, feature_id):
+        app = AssembleApp.instance()
+        feature_code = app.get_feature_code(feature_id)
+        if feature_code is None:
+            self.send_error(404)
+        else:
+            self.write({'code': feature_code})
+
+
+class InspectFeatureHandler(APIHandler):
+
+    @tornado.web.authenticated
+    def post(self):
+        input_data = self.get_json_body()
+        app = AssembleApp.instance()
+        result = app.extract_inputs_from_feature_code(input_data)
+        self.write(result)
+        if result.get('message') is not None:
+            self.set_status(400)
+
+
 class SubmitHandler(APIHandler):
 
     lock = tornado.locks.Lock()
@@ -189,6 +221,9 @@ def setup_handlers(app: NotebookWebApplication, url_path: str):
         (route_pattern('version'), VersionHandler),
         (route_pattern('config'), ConfigHandler),
         (route_pattern(r'config/(.*)'), ConfigItemHandler),
+        (route_pattern('features'), FeaturesHandler),
+        (route_pattern(r'features/(.*)'), FeatureCodeHandler),
+        (route_pattern('inspect'), InspectFeatureHandler),
         (route_pattern('submit'), SubmitHandler),
         (route_pattern('auth', 'authorize'), AuthorizeHandler),
         (route_pattern('auth', 'token'), TokenHandler),
