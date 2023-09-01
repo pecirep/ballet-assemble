@@ -14,6 +14,10 @@ import { LabIcon } from '@jupyterlab/ui-components';
 
 import { IDisposable, DisposableDelegate } from '@lumino/disposable';
 
+import { toArray } from '@lumino/algorithm';
+
+import { Cell } from '@jupyterlab/cells';
+
 import {
   JupyterFrontEnd,
   JupyterFrontEndPlugin
@@ -26,7 +30,6 @@ import { NotebookPanel, INotebookModel } from '@jupyterlab/notebook';
 import { ISettingRegistry } from '@jupyterlab/settingregistry';
 
 import {
-  Location,
   LocationSet,
   parse,
   slice
@@ -37,7 +40,8 @@ import {
   CheckFeatureWidget,
   ConfirmWidget,
   FeatureSubmissionStateWidget,
-  FeatureSubmittedOkayWidget
+  FeatureSubmittedOkayWidget,
+  SliceWidget
 } from './widgets';
 
 import {
@@ -58,17 +62,6 @@ const PLUGIN_ID = `${EXTENSION_NAME}:plugin`;
 
 const balletIconSvg = `<?xml version="1.0" encoding="utf-8"?><!-- Generator: Adobe Illustrator 24.3.0, SVG Export Plug-In . SVG Version: 6.00 Build 0)  --> <svg version="1.1" id="Layer_1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" x="0px" y="0px" viewBox="0 0 72 72" style="enable-background:new 0 0 72 72;" xml:space="preserve"> <style type="text/css"> .st0{fill:#FBDD37;} .st1{fill:#565656;} </style> <g> <g> <rect x="0" class="st0" width="72" height="72"/> </g> <g> <path class="st1" d="M23.8,16.3c0-1.2,0.6-1.8,1.8-1.8h1.7c1.2,0,1.8,0.6,1.8,1.8v11.4c0,0.4,0,0.7,0,1c0,0.3,0,0.5-0.1,0.7 c0,0.3-0.1,0.5-0.1,0.7h0.1c0.5-1,1.2-1.8,2-2.5c0.7-0.6,1.7-1.2,2.9-1.8s2.6-0.8,4.2-0.8c1.8,0,3.5,0.4,5,1.1 c1.5,0.7,2.8,1.7,3.9,3c1.1,1.3,1.9,2.8,2.5,4.6c0.6,1.8,0.9,3.8,0.9,5.9c0,2.3-0.3,4.3-0.9,6.1c-0.6,1.8-1.5,3.4-2.7,4.6 c-1.1,1.3-2.5,2.3-4,3s-3.2,1.1-5,1.1c-1.7,0-3.1-0.3-4.2-0.8c-1.1-0.6-2.1-1.2-2.8-1.8c-0.8-0.8-1.5-1.7-2-2.7h-0.1 c0,0.1,0,0.3,0.1,0.4c0.1,0.4,0.1,0.8,0.1,1.2V52c0,1.1-0.6,1.6-1.8,1.6h-1.4c-1.2,0-1.8-0.6-1.8-1.8V16.3z M29,39.6 c0,1.3,0.2,2.5,0.5,3.7c0.3,1.2,0.8,2.3,1.5,3.2c0.6,0.9,1.5,1.7,2.4,2.2c1,0.6,2.1,0.8,3.5,0.8c1.1,0,2.2-0.2,3.2-0.7 c1-0.4,1.9-1.1,2.6-1.9c0.7-0.8,1.3-1.9,1.7-3.1c0.4-1.2,0.6-2.6,0.6-4.2c0-1.5-0.2-2.9-0.6-4.1c-0.4-1.2-0.9-2.3-1.6-3.1 c-0.7-0.9-1.5-1.5-2.5-2c-1-0.5-2-0.7-3.2-0.7c-1.1,0-2.1,0.2-3,0.6c-1,0.4-1.8,1-2.6,1.8c-0.8,0.8-1.4,1.8-1.8,3.1 C29.3,36.4,29,37.9,29,39.6z"/> </g> </g> </svg>`;
 const ONE_SECOND = 1000;
-
-class Loc implements Location {
-  // tslint:disable-next-line:variable-name
-  first_line: number;
-  // tslint:disable-next-line:variable-name
-  first_column: number;
-  // tslint:disable-next-line:variable-name
-  last_line: number;
-  // tslint:disable-next-line:variable-name
-  last_column: number;
-}
 
 /*
  * description: Returns the location (e.g. {first_line: 6, first_column: 0, last_line: 6, last_column: 10}
@@ -107,17 +100,12 @@ export function getLocationFromCurrentCell(activeCell: any, content: String[]) {
   }
 
   // Location starts linecount at 1, not 0. Thus +1 has to be added to linecounter
-  firstLine = firstLine + 1;
-  lastLine = lastLine + 1;
-
-  let l = new Loc();
-  l.first_line = firstLine;
-  l.first_column = 0;
-  l.last_line = lastLine;
-  l.last_column = lastColumn;
-
-  let ls = new LocationSet(l);
-  return ls;
+  return new LocationSet({
+    first_line: firstLine + 1,
+    last_line: lastLine + 1,
+    first_column: 0,
+    last_column: lastColumn
+  });
 }
 
 /* description: Takes the set of locations returned by slice() and extract the given locations from the original code stored in ctsSplit.
@@ -153,6 +141,11 @@ export function getCodeFromSlice(slicedLoc: LocationSet, ctsSplit: string[]) {
   return result;
 }
 
+function cellContainsCode(cell: Cell) {
+  const content = cell.model.value.text;
+  return cell.model.type === 'code' && content && content.trim() !== '';
+}
+
 export function createCellFromCode(notebook: Notebook, code: string) {
   NotebookActions.insertBelow(notebook);
   notebook.activeCell.model.value.text = code;
@@ -181,9 +174,6 @@ export class AssembleSubmitButtonExtension
     panel: NotebookPanel,
     context: DocumentRegistry.IContext<INotebookModel>
   ): IDisposable {
-    let sliceButton = this.createSliceButton(panel);
-    panel.toolbar.addItem('assembleSliceButton', sliceButton);
-
     let button = this.createSubmitButton(panel);
     panel.toolbar.addItem('assembleSubmitButton', button);
 
@@ -361,7 +351,7 @@ export class AssembleSubmitButtonExtension
     });
   }
 
-  private async checkForFeaturesWithSameInputs(notebook: Notebook, contents: string) {
+  private async checkForFeaturesWithSameInputs(notebook: Notebook, contents: string): Promise<boolean> {
     const widget = new CheckFeatureWidget(notebook);
     const dialog = new Dialog({
       title: 'Checking for similar features...',
@@ -372,15 +362,21 @@ export class AssembleSubmitButtonExtension
 
     const [existingFeatures, newFeatureInputs] = await Promise.all([getExistingFeatures(), getNewFeatureInputs(contents)]);
 
-    if (!newFeatureInputs) {
+    if ('message' in newFeatureInputs) {
+      const slicedCode = this.sliceActiveCell(notebook);
       dialog.dispose();
-      return false;
-      //TODO: suggest code slicing
+      const sliceDialog = await showDialog({
+        title: 'Code analysis failed',
+        body: new SliceWidget(slicedCode, newFeatureInputs.message),
+        buttons: [Dialog.cancelButton({label: 'Ignore'}), Dialog.okButton({label: 'Submit sliced code'})]
+      });
+      if (!sliceDialog.button.accept) return true;
+      else return await this.checkForFeaturesWithSameInputs(notebook, slicedCode);
     }
 
-    for (const feature in newFeatureInputs) {
+    for (const feature in newFeatureInputs.result) {
       widget.setState({ name: feature, similarFeatures: {} })
-      const newInputs = newFeatureInputs[feature];
+      const newInputs = newFeatureInputs.result[feature];
       const existingFeaturesWithSameInputs = Object.keys(existingFeatures).filter(featureId => {
         const featureInfo = existingFeatures[featureId];
         return newInputs.every(input => featureInfo.inputs.includes(input));
@@ -410,101 +406,33 @@ export class AssembleSubmitButtonExtension
     return true;
   }
 
-  private createSliceButton(panel: NotebookPanel) {
-    let button = new ToolbarButton({
-      label: 'Slice',
-      /*icon: new LabIcon({
-        name: 'ballet-icon',
-        svgstr: balletIconSvg
-      }),*/
-      onClick: async () => {
-        let notebook = panel.content;
-        let cells = panel.content.model.cells;
+  private sliceActiveCell(notebook: Notebook) {
+    // load current cell and check if it contains code
+    if (!cellContainsCode(notebook.activeCell)) {
+      void showErrorMessage(
+        'Error slicing code',
+        'Selected cell does not have any code content. Slice cannot be obtained.'
+      );
+      return;
+    }
 
-        // load current cell and check if it contains code
-        let activeCell = notebook.activeCell.model.value.text.toString();
-        if (
-          activeCell === null ||
-          activeCell.length === null ||
-          activeCell.trim() === '' ||
-          notebook.activeCell.model.type !== 'code'
-        ) {
-          alert(
-            'Selected cell does not have any code content. Slice cannot be obtained.'
-          );
-          return;
-        }
+    const activeCell = notebook.activeCell.model.value.text.toString();
+    const cellLines = toArray(notebook.model.cells)
+      .filter(cell => cell.type === 'code')
+      .flatMap(cell => cell.value.text.split('\n'));
 
-        let content = [];
-        for (let i = 0; i < cells.length; i++) {
-          if (cells.get(i).type === 'code') {
-            content.push(cells.get(i).value.text);
-          }
-        }
-        let ctsJoined = content.join('\n');
-        let ctsSplit = ctsJoined.split('\n');
-
-        // use parse(array) to generate tree
-        let tree = parse(ctsJoined);
-        let loc;
-        try {
-          loc = getLocationFromCurrentCell(activeCell, ctsSplit);
-        } catch (e) {
-          alert(e instanceof Error ? e.message : e);
-        }
-
-        let slicedLoc = slice(tree, loc);
-
-        let result;
-        try {
-          result = getCodeFromSlice(slicedLoc, ctsSplit);
-        } catch (e) {
-          alert(e instanceof Error ? e.message : e);
-        }
-
-        const finalDialog = await showDialog({
-          title:
-            'Here is you code slice. Click OK to submit it to your upstream GitHub Repository!',
-          body: new ConfirmWidget(result)
-        });
-        if (!finalDialog.button.accept) {
-          return;
-        }
-
-        if (!(await isAuthenticated())) {
-          void showErrorMessage(
-            'Not authenticated',
-            "You're not authenticated with GitHub - click the GitHub icon in the toolbar to connect!"
-          );
-          return;
-        }
-        await this.submitContentToServer(result);
-      },
-      tooltip: 'Slice code of current cell'
-    });
-    return button;
+    // use parse(array) to generate tree
+    const tree = parse(cellLines.join('\n'));
+    try {
+      const loc = getLocationFromCurrentCell(activeCell, cellLines);
+      const slicedLoc = slice(tree, loc);
+      const slicedCode = getCodeFromSlice(slicedLoc, cellLines);
+      return slicedCode;
+    } catch (e) {
+      void showErrorMessage('Error slicing code', e instanceof Error ? e.message : e);
+      return
+    }
   }
-
-  /* description: Takes the set of locations returned by slice() and extract the given locations from the original code stored in ctsSplit.
-   * Every location contains the "line" attribute, which indicates the code line that was extracted (count starts at 1).
-   * Since the ctsSplit array starts at 0, an index shift needs to be performed: line = 1 of a location corresponds to
-   * ctsSplit[0].
-   * slicedLoc: a set of locations that indicates which entries of ctsSplit are code dependencies
-   * ctsSplit: an array that contains the code of the current notebook, each entry corresponds to one line of code
-   * returns: a string array of the code lines that were marked in slicedLoc */
-  /*public getCodeFromSlice(slicedLoc: LocationSet, ctsSplit: string[]) {
-    return func(ctsSplit, slicedLoc);
-  }*/
-
-  /*
-   * description: Returns the location (e.g. {first_line: 6, first_column: 0, last_line: 6, last_column: 10}
-   * line 6 from char 0 to char 10 (include eol)) of the currently active cell
-   * activeCell: currently active cell
-   * content: array containing all lines of code of the notebook
-   * returns: set of locations, whose first_line elem mark the lines that should be included */
-  /*  public getLocationFromCurrentCell(activeCell: any, content: String[]) {
-    return func(activeCell, content);
-  }*/
 }
 
 async function activate(

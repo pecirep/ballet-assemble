@@ -43,9 +43,16 @@ interface IFeatureInfoResponse {
   [featureId: string]: IFeatureInfo;
 }
 
-interface IFeatureInputResponse {
+interface IFeatureInputResult {
   [featureId: string]: string[];
 }
+
+interface IFeatureInputError {
+  message: string;
+  tb: string;
+}
+
+type IFeatureInputResponse = { result: IFeatureInputResult } | IFeatureInputError;
 
 export async function submit(
   cellContents: string
@@ -77,13 +84,19 @@ export async function getExistingFeatureCode(featureId: string) {
 
 export function getNewFeatureInputs(
   cellContents: string
-): Promise<IFeatureInputResponse | void> {
-  return request<IFeatureInputResponse>('inspect', {
+): Promise<IFeatureInputResponse> {
+  return request<IFeatureInputResult>('inspect', {
     method: 'POST',
     body: JSON.stringify({
       codeContent: cellContents
     })
-  }).catch(console.error);
+  }).then(result => ({ result })).catch((error: ServerConnection.ResponseError) => {
+    console.error(error);
+    return {
+      message: error.message,
+      tb: error.traceback
+    };
+  });
 }
 
 export async function getSubmission(): Promise<ISubmissionResponse> {

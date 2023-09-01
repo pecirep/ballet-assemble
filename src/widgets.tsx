@@ -33,6 +33,34 @@ export class ConfirmWidget extends ReactWidget {
   }
 }
 
+export class SliceWidget extends ReactWidget {
+  constructor(private code: string, private error: string) {
+    super();
+    this.addClass('jp-ReactWidget');
+  }
+
+  render() {
+    return (
+      <div className="assemble-checkFeature">
+        <p>
+          The following error occured during code analysis:
+        </p>
+        <p className="assemble-analysisError">
+          {this.error}
+        </p>
+        <p>
+          Do you wish to submit the following sliced code instead based on definitions from other cells?
+        </p>
+        <div>
+          <pre>
+            <code>{this.code}</code>
+          </pre>
+        </div>
+      </div>
+    );
+  }
+}
+
 type IStateDetails = { [k in keyof ISubmissionState]: JSX.Element | string };
 
 const stateDetails: IStateDetails = {
